@@ -20,35 +20,34 @@ export default function MapPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    const token = process.env.NEXT_PUBLIC_MAPTILER_KEY;
     if (!token) {
-      setError("Token Mapbox non configuré (NEXT_PUBLIC_MAPBOX_TOKEN).");
+      setError("Clé Maptiler non configurée (NEXT_PUBLIC_MAPTILER_KEY).");
       return;
     }
 
-    let map: mapboxgl.Map | null = null;
+    let map: import("maplibre-gl").Map | null = null;
 
     async function initMap() {
-      let mapboxgl: typeof import("mapbox-gl").default;
+      let maplibregl: typeof import("maplibre-gl");
       try {
-        mapboxgl = (await import("mapbox-gl")).default;
-        await import("mapbox-gl/dist/mapbox-gl.css");
+        maplibregl = await import("maplibre-gl");
+        await import("maplibre-gl/dist/maplibre-gl.css");
       } catch {
-        setError("Impossible de charger Mapbox. Vérifiez votre connexion.");
+        setError("Impossible de charger la carte. Vérifiez votre connexion.");
         return;
       }
 
       if (!mapContainer.current) return;
 
-      mapboxgl.accessToken = token!;
-      map = new mapboxgl.Map({
+      map = new maplibregl.Map({
         container: mapContainer.current,
-        style: "mapbox://styles/mapbox/dark-v11",
+        style: `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${token}`,
         center: [2.3, 46.5],
         zoom: 5,
       });
 
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+      map.addControl(new maplibregl.NavigationControl(), "top-right");
 
       map.on("load", () => {
         setMapLoaded(true);
@@ -56,19 +55,18 @@ export default function MapPage() {
         demoHikes
           .filter((h) => h.lat != null && h.lng != null)
           .forEach((hike) => {
-            // All values are escaped before insertion into popup HTML.
             const safeName = escapeHtml(hike.name);
             const safeDist = escapeHtml(String(hike.distance_km));
             const safeElev = escapeHtml(String(hike.elevation_m));
 
-            const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(
+            const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
               `<div style="color:#1a1a18;font-family:sans-serif">
                 <strong>${safeName}</strong><br/>
                 <span style="font-size:12px">${safeDist} km · ${safeElev} m D+</span>
               </div>`,
             );
 
-            new mapboxgl.Marker({ color: "#d4a04a" })
+            new maplibregl.Marker({ color: "#d4a04a" })
               .setLngLat([hike.lng!, hike.lat!])
               .setPopup(popup)
               .addTo(map!);
@@ -93,10 +91,10 @@ export default function MapPage() {
           <MapPin className="mb-4 h-12 w-12 text-peak-text-muted" />
           <p className="text-peak-text-muted">{error}</p>
           <p className="mt-2 text-sm text-peak-text-muted">
-            Ajoutez NEXT_PUBLIC_MAPBOX_TOKEN dans .env.local
+            Ajoutez NEXT_PUBLIC_MAPTILER_KEY dans .env.local
           </p>
 
-          {/* Fallback: list of locations */}
+          {/* Fallback: liste des localisations */}
           <div className="mt-6 w-full max-w-md space-y-2 px-6">
             {demoHikes
               .filter((h) => h.lat && h.lng)

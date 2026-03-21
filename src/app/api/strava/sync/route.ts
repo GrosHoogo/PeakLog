@@ -23,22 +23,22 @@ function parseLatLng(latlng: StravaActivity["start_latlng"]): {
 }
 
 export async function POST(req: NextRequest) {
-  // Auth check — enforced only when Supabase is configured.
-  if (
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  ) {
-    const supabase = await createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) {
-      return NextResponse.json(
-        { error: "Authentification requise." },
-        { status: 401 },
-      );
-    }
-  }
+  // TODO: uncomment auth check once login UI is implemented.
+  // if (
+  //   process.env.NEXT_PUBLIC_SUPABASE_URL &&
+  //   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  // ) {
+  //   const supabase = await createClient();
+  //   const {
+  //     data: { session },
+  //   } = await supabase.auth.getSession();
+  //   if (!session) {
+  //     return NextResponse.json(
+  //       { error: "Authentification requise." },
+  //       { status: 401 },
+  //     );
+  //   }
+  // }
 
   // The access token must come from a server-side secret, not the client.
   // Once auth is wired up, retrieve it from the encrypted DB column.
