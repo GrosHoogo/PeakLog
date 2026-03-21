@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/settings?error=no_code", req.url));
   }
 
-  const clientId = process.env.STRAVA_CLIENT_ID;
+  const clientId = process.env.NEXT_PUBLIC_STRAVA_CLIENT_ID;
   const clientSecret = process.env.STRAVA_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
@@ -29,7 +29,6 @@ export async function GET(req: NextRequest) {
     });
 
     if (!tokenRes.ok) {
-      // Log only the status code, never the body which may contain sensitive data.
       console.error("Strava token exchange failed. Status:", tokenRes.status);
       return NextResponse.redirect(
         new URL("/settings?error=token_exchange", req.url),
@@ -38,20 +37,47 @@ export async function GET(req: NextRequest) {
 
     const tokens = await tokenRes.json();
 
-    // TODO: store tokens in Supabase using pgcrypto encryption.
-    // Required columns: encrypted_access_token, encrypted_refresh_token, expires_at.
-    // Never store tokens in plaintext. Never log token values.
-
-    if (process.env.NODE_ENV === "development") {
-      console.error(
-        "Strava callback successful for athlete ID:",
-        tokens.athlete?.id,
-      );
-    }
-
-    return NextResponse.redirect(
+    const isProduction = process.env.NODE_ENV === "production";
+    const response = NextResponse.redirect(
       new URL("/settings?strava=connected", req.url),
     );
+
+    // Store tokens in httpOnly cookies (server-readable only).
+    // In production, replace with pgcrypto-encrypted DB storage.
+    response.cookies.set("strava_access_token", tokens.access_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax",
+      maxAge: tokens.expires_in ?? 21600,
+      path: "/",
+    });
+
+    response.cookies.set("strava_refresh_token", tokens.refresh_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 30,
+      path: "/",
+    });
+
+    response.cookies.set("strava_expires_at", String(tokens.expires_at), {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 30,
+      path: "/",
+    });
+
+    // Non-httpOnly flag so the client can check connection state.
+    response.cookies.set("strava_connected", "true", {
+      httpOnly: false,
+      secure: isProduction,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 30,
+      path: "/",
+    });
+
+    return response;
   } catch (err) {
     console.error("Strava callback error:", err);
     return NextResponse.redirect(

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase-server";
 import type { StravaActivity } from "@/lib/types";
 
 const ISO_DATE_RE = /(\d{4}-\d{2}-\d{2})/;
@@ -40,30 +39,13 @@ export async function POST(req: NextRequest) {
   //   }
   // }
 
-  // The access token must come from a server-side secret, not the client.
-  // Once auth is wired up, retrieve it from the encrypted DB column.
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Corps de requête invalide." },
-      { status: 400 },
-    );
-  }
-
-  const accessToken =
-    typeof body === "object" &&
-    body !== null &&
-    "accessToken" in body &&
-    typeof (body as Record<string, unknown>).accessToken === "string"
-      ? (body as { accessToken: string }).accessToken
-      : null;
+  // Read the access token from the httpOnly cookie set during OAuth callback.
+  const accessToken = req.cookies.get("strava_access_token")?.value;
 
   if (!accessToken) {
     return NextResponse.json(
-      { error: "Access token requis." },
-      { status: 400 },
+      { error: "Connectez d'abord votre compte Strava dans les paramètres." },
+      { status: 401 },
     );
   }
 
@@ -89,7 +71,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Cast and filter with strict guards — all fields validated before use.
     const activities = rawActivities as StravaActivity[];
 
     const hikes = activities

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { demoHikes } from "@/lib/demo-data";
+import { useHikes } from "@/hooks/use-hikes";
 import type { Difficulty } from "@/lib/types";
 
 const difficultyLabels: Record<Difficulty, string> = {
@@ -31,7 +31,8 @@ const difficultyColors: Record<Difficulty, string> = {
 
 export default function HikeDetailPage() {
   const params = useParams<{ id: string }>();
-  const hike = demoHikes.find((h) => h.id === params.id);
+  const { getHike } = useHikes();
+  const hike = getHike(params.id);
 
   if (!hike) {
     return (

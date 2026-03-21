@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { PlanFormSchema } from "@/lib/validation";
 import { checkRateLimit, getClientKey } from "@/lib/rate-limit";
-import { createClient } from "@/lib/supabase-server";
 
 // 10 plan generations per hour per client.
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY non configurée." },
+      { error: "GEMINI_API_KEY non configurée." },
       { status: 500 },
     );
   }
@@ -97,57 +97,14 @@ Réponds en français avec ces sections :
 Sois précis, pratique et encourageant.`;
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2048,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    if (!response.ok) {
-      console.error("Anthropic API error. Status:", response.status);
-      return NextResponse.json(
-        { error: "Erreur API Anthropic." },
-        { status: 502 },
-      );
-    }
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const plan = response.text();
 
-    let data: unknown;
-    try {
-      data = await response.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Réponse Anthropic illisible." },
-        { status: 502 },
-      );
-    }
-
-    // Validate the shape of Anthropic's response.
-    if (
-      typeof data !== "object" ||
-      data === null ||
-      !Array.isArray((data as Record<string, unknown>).content) ||
-      (data as Record<string, unknown[]>).content.length === 0
-    ) {
-      console.error("Unexpected Anthropic response shape.");
-      return NextResponse.json(
-        { error: "Format de réponse inattendu." },
-        { status: 502 },
-      );
-    }
-
-    const firstBlock = (data as { content: Record<string, unknown>[] })
-      .content[0];
-    const plan = firstBlock?.text;
-
-    if (typeof plan !== "string" || plan.trim() === "") {
+    if (!plan || plan.trim() === "") {
       return NextResponse.json(
         { error: "Réponse IA vide ou invalide." },
         { status: 502 },
@@ -156,9 +113,16 @@ Sois précis, pratique et encourageant.`;
 
     return NextResponse.json({ plan });
   } catch (err) {
-    console.error("Plan generation error:", err);
+    const message =
+      err instanceof Error ? err.message : "Erreur inconnue.";
+    console.error("Plan generation error:", message);
     return NextResponse.json(
-      { error: "Erreur lors de la génération." },
+      {
+        error:
+          process.env.NODE_ENV === "development"
+            ? `Erreur Gemini : ${message}`
+            : "Erreur lors de la génération.",
+      },
       { status: 500 },
     );
   }

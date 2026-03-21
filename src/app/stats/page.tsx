@@ -9,7 +9,7 @@ import {
   Trophy,
   Clock,
 } from "lucide-react";
-import { demoHikes } from "@/lib/demo-data";
+import { useHikes } from "@/hooks/use-hikes";
 
 const difficultyColors: Record<string, string> = {
   easy: "#5a7a52",
@@ -58,15 +58,17 @@ const StatsCharts = dynamic(
 );
 
 export default function StatsPage() {
-  const totalKm = demoHikes.reduce((acc, h) => acc + h.distance_km, 0);
-  const totalElevation = demoHikes.reduce((acc, h) => acc + h.elevation_m, 0);
-  const totalDuration = demoHikes.reduce((acc, h) => acc + h.duration_min, 0);
+  const { hikes } = useHikes();
+
+  const totalKm = hikes.reduce((acc, h) => acc + h.distance_km, 0);
+  const totalElevation = hikes.reduce((acc, h) => acc + h.elevation_m, 0);
+  const totalDuration = hikes.reduce((acc, h) => acc + h.duration_min, 0);
   const totalHours = Math.floor(totalDuration / 60);
 
   // Monthly data
   const monthlyData = Array.from({ length: 12 }, (_, i) => {
     const month = i + 1;
-    const monthHikes = demoHikes.filter(
+    const monthHikes = hikes.filter(
       (h) => new Date(h.date).getMonth() + 1 === month,
     );
     return {
@@ -79,7 +81,7 @@ export default function StatsPage() {
   });
 
   // Difficulty distribution — explicit generic avoids implicit-any in callback.
-  const difficultyMap = demoHikes.reduce<Record<string, number>>((acc, h) => {
+  const difficultyMap = hikes.reduce<Record<string, number>>((acc, h) => {
     acc[h.difficulty] = (acc[h.difficulty] ?? 0) + 1;
     return acc;
   }, {});
@@ -91,10 +93,10 @@ export default function StatsPage() {
   }));
 
   // Best hikes
-  const bestDistance = [...demoHikes].sort(
+  const bestDistance = [...hikes].sort(
     (a, b) => b.distance_km - a.distance_km,
   )[0];
-  const bestElevation = [...demoHikes].sort(
+  const bestElevation = [...hikes].sort(
     (a, b) => b.elevation_m - a.elevation_m,
   )[0];
 
@@ -109,7 +111,7 @@ export default function StatsPage() {
       label: "Dénivelé cumulé",
       value: `${totalElevation.toLocaleString()} m`,
     },
-    { icon: Calendar, label: "Sorties", value: `${demoHikes.length}` },
+    { icon: Calendar, label: "Sorties", value: `${hikes.length}` },
     { icon: Clock, label: "Heures de marche", value: `${totalHours}h` },
     {
       icon: Trophy,

@@ -4,10 +4,11 @@ import { useState, useMemo } from "react";
 import { Plus, Search, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { HikeCard } from "@/components/hike-card";
-import { demoHikes } from "@/lib/demo-data";
+import { useHikes } from "@/hooks/use-hikes";
 import type { Difficulty } from "@/lib/types";
 
 export default function JournalPage() {
+  const { hikes } = useHikes();
   const [search, setSearch] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<Difficulty | "all">(
     "all",
@@ -15,7 +16,7 @@ export default function JournalPage() {
   const [showFilters, setShowFilters] = useState(false);
 
   const filtered = useMemo(() => {
-    return demoHikes
+    return hikes
       .filter((h) => {
         const matchesSearch =
           !search ||
@@ -26,7 +27,7 @@ export default function JournalPage() {
         return matchesSearch && matchesDifficulty;
       })
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [search, difficultyFilter]);
+  }, [hikes, search, difficultyFilter]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -34,8 +35,8 @@ export default function JournalPage() {
         <div>
           <h1 className="font-display text-3xl font-bold">Journal</h1>
           <p className="mt-1 text-peak-text-muted">
-            {demoHikes.length} sortie{demoHikes.length > 1 ? "s" : ""}{" "}
-            enregistrée{demoHikes.length > 1 ? "s" : ""}
+            {hikes.length} sortie{hikes.length > 1 ? "s" : ""} enregistrée
+            {hikes.length > 1 ? "s" : ""}
           </p>
         </div>
         <Link

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   User,
@@ -9,11 +9,48 @@ import {
   ExternalLink,
   CheckCircle,
   AlertCircle,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
+import { useHikes } from "@/hooks/use-hikes";
+import type { Hike } from "@/lib/types";
+
+/** Infers a difficulty from elevation and distance. */
+function inferDifficulty(
+  elevation: number,
+  distance: number,
+): Hike["difficulty"] {
+  const effort = elevation / Math.max(distance, 1);
+  if (effort > 120 || elevation > 1500) return "expert";
+  if (effort > 80 || elevation > 1000) return "hard";
+  if (effort > 40 || elevation > 400) return "moderate";
+  return "easy";
+}
+
+/** Reads a cookie value by name from document.cookie. */
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(
+    new RegExp("(?:^|; )" + name + "=([^;]*)"),
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 function SettingsContent() {
   const searchParams = useSearchParams();
-  const stravaConnected = searchParams.get("strava") === "connected";
+  const justConnected = searchParams.get("strava") === "connected";
+  const error = searchParams.get("error");
+
+  const [stravaConnected, setStravaConnected] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const { addHikes } = useHikes();
+
+  useEffect(() => {
+    // Check cookie for persistent Strava state.
+    if (justConnected || getCookie("strava_connected") === "true") {
+      setStravaConnected(true);
+    }
+  }, [justConnected]);
 
   function connectStrava() {
     const clientId = process.env.NEXT_PUBLIC_STRAVA_CLIENT_ID;
@@ -21,7 +58,7 @@ function SettingsContent() {
 
     if (!clientId || !redirectUri) {
       alert(
-        "Configurez STRAVA_CLIENT_ID et NEXT_PUBLIC_STRAVA_REDIRECT_URI dans .env.local",
+        "Configurez NEXT_PUBLIC_STRAVA_CLIENT_ID et NEXT_PUBLIC_STRAVA_REDIRECT_URI dans .env.local",
       );
       return;
     }
@@ -30,11 +67,81 @@ function SettingsContent() {
     window.location.href = url;
   }
 
+  async function syncStrava() {
+    setSyncing(true);
+    setSyncResult(null);
+
+    try {
+      const res = await fetch("/api/strava/sync", { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSyncResult(data.error ?? "Erreur de synchronisation.");
+        return;
+      }
+
+      // Convert partial Strava hikes to full Hike objects and store locally.
+      const now = new Date().toISOString();
+      const fullHikes: Hike[] = (data.hikes ?? []).map(
+        (h: {
+          name: string;
+          date: string;
+          distance_km: number;
+          elevation_m: number;
+          duration_min: number;
+          source: "strava";
+          external_id: string;
+          lat: number | null;
+          lng: number | null;
+        }) => ({
+          id: h.external_id,
+          user_id: "local",
+          name: h.name,
+          date: h.date,
+          distance_km: h.distance_km,
+          elevation_m: h.elevation_m,
+          duration_min: h.duration_min,
+          difficulty: inferDifficulty(h.elevation_m, h.distance_km),
+          notes: null,
+          gpx_data: null,
+          source: h.source,
+          external_id: h.external_id,
+          lat: h.lat,
+          lng: h.lng,
+          tags: null,
+          created_at: now,
+        }),
+      );
+
+      addHikes(fullHikes);
+
+      setSyncResult(
+        `${data.synced} randonnée${data.synced > 1 ? "s" : ""} synchronisée${data.synced > 1 ? "s" : ""} sur ${data.total} activités.`,
+      );
+    } catch {
+      setSyncResult("Erreur de connexion au serveur.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const sectionClass =
     "rounded-2xl border border-peak-border bg-peak-surface p-6";
 
   return (
     <div className="space-y-6">
+      {/* Error banner */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg bg-rust-500/10 p-4 text-sm text-rust-400">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {error === "token_exchange"
+            ? "Échec de la connexion Strava. Réessayez."
+            : error === "no_code"
+              ? "Code d'autorisation manquant."
+              : "Une erreur est survenue."}
+        </div>
+      )}
+
       {/* Profile */}
       <div className={sectionClass}>
         <div className="mb-4 flex items-center gap-3">
@@ -56,9 +163,26 @@ function SettingsContent() {
         </div>
 
         {stravaConnected ? (
-          <div className="flex items-center gap-2 text-sm text-forest-400">
-            <CheckCircle className="h-4 w-4" />
-            Connecté
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm text-forest-400">
+              <CheckCircle className="h-4 w-4" />
+              Connecté
+            </div>
+            <button
+              onClick={syncStrava}
+              disabled={syncing}
+              className="flex items-center gap-2 rounded-xl bg-[#FC4C02] px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {syncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {syncing ? "Synchronisation..." : "Synchroniser mes activités"}
+            </button>
+            {syncResult && (
+              <p className="text-sm text-peak-text-muted">{syncResult}</p>
+            )}
           </div>
         ) : (
           <div>

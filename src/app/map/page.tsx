@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { demoHikes } from "@/lib/demo-data";
+import { useHikes } from "@/hooks/use-hikes";
 import { MapPin } from "lucide-react";
 
 /** Escapes special HTML characters to prevent XSS in popup content. */
@@ -15,9 +15,12 @@ function escapeHtml(str: string): string {
 }
 
 export default function MapPage() {
+  const { hikes } = useHikes();
   const mapContainer = useRef<HTMLDivElement>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const hikesWithCoords = hikes.filter((h) => h.lat != null && h.lng != null);
 
   useEffect(() => {
     const token = process.env.NEXT_PUBLIC_MAPTILER_KEY;
@@ -52,25 +55,25 @@ export default function MapPage() {
       map.on("load", () => {
         setMapLoaded(true);
 
-        demoHikes
-          .filter((h) => h.lat != null && h.lng != null)
-          .forEach((hike) => {
-            const safeName = escapeHtml(hike.name);
-            const safeDist = escapeHtml(String(hike.distance_km));
-            const safeElev = escapeHtml(String(hike.elevation_m));
+        hikesWithCoords.forEach((hike) => {
+          const safeName = escapeHtml(hike.name);
+          const safeDist = escapeHtml(String(hike.distance_km));
+          const safeElev = escapeHtml(String(hike.elevation_m));
 
-            const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
-              `<div style="color:#1a1a18;font-family:sans-serif">
-                <strong>${safeName}</strong><br/>
-                <span style="font-size:12px">${safeDist} km · ${safeElev} m D+</span>
-              </div>`,
-            );
+          const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
+            `<div style="color:#1a1a18;font-family:sans-serif">
+              <strong>${safeName}</strong><br/>
+              <span style="font-size:12px">${safeDist} km · ${safeElev} m D+</span>
+            </div>`,
+          );
 
-            new maplibregl.Marker({ color: "#d4a04a" })
-              .setLngLat([hike.lng!, hike.lat!])
-              .setPopup(popup)
-              .addTo(map!);
-          });
+          new maplibregl.Marker({
+            color: hike.source === "strava" ? "#FC4C02" : "#d4a04a",
+          })
+            .setLngLat([hike.lng!, hike.lat!])
+            .setPopup(popup)
+            .addTo(map!);
+        });
       });
     }
 
@@ -79,7 +82,8 @@ export default function MapPage() {
     return () => {
       map?.remove();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hikesWithCoords.length]);
 
   if (error) {
     return (
@@ -96,22 +100,20 @@ export default function MapPage() {
 
           {/* Fallback: liste des localisations */}
           <div className="mt-6 w-full max-w-md space-y-2 px-6">
-            {demoHikes
-              .filter((h) => h.lat && h.lng)
-              .map((hike) => (
-                <div
-                  key={hike.id}
-                  className="flex items-center gap-3 rounded-lg bg-peak-surface-light p-3 text-sm"
-                >
-                  <MapPin className="h-4 w-4 shrink-0 text-amber-400" />
-                  <div>
-                    <p className="font-medium">{hike.name}</p>
-                    <p className="text-xs text-peak-text-muted">
-                      {hike.lat?.toFixed(4)}, {hike.lng?.toFixed(4)}
-                    </p>
-                  </div>
+            {hikesWithCoords.map((hike) => (
+              <div
+                key={hike.id}
+                className="flex items-center gap-3 rounded-lg bg-peak-surface-light p-3 text-sm"
+              >
+                <MapPin className="h-4 w-4 shrink-0 text-amber-400" />
+                <div>
+                  <p className="font-medium">{hike.name}</p>
+                  <p className="text-xs text-peak-text-muted">
+                    {hike.lat?.toFixed(4)}, {hike.lng?.toFixed(4)}
+                  </p>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -123,7 +125,7 @@ export default function MapPage() {
       <div className="border-b border-peak-border px-4 py-4 sm:px-6">
         <h1 className="font-display text-2xl font-bold">Carte des aventures</h1>
         <p className="text-sm text-peak-text-muted">
-          {demoHikes.filter((h) => h.lat && h.lng).length} points de rando
+          {hikesWithCoords.length} points de rando
         </p>
       </div>
       <div ref={mapContainer} className="flex-1" />
