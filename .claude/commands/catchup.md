@@ -1,0 +1,1 @@
+Lis `MEMORY.md` puis identifie les fichiers modifiés récemment sur la branche courante avec `git diff --name-only main...HEAD`. Pour chaque fichier modifié, lis les sections pertinentes et fais un résumé concis de l'état actuel du travail. Ne propose aucune modification.
