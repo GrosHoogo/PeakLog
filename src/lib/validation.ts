@@ -39,6 +39,7 @@ export const PlanFormSchema = z.object({
     .pipe(z.number().min(1).max(100)),
   fitness: z.enum(ALLOWED_FITNESS),
   equipment: z.string().max(500).optional().or(z.literal("")),
+  loop: z.boolean().optional().default(false),
 });
 
 export type PlanFormInput = z.input<typeof PlanFormSchema>;
