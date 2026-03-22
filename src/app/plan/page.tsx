@@ -2,64 +2,50 @@
 
 import { useState, useEffect, useRef } from "react";
 import {
-  Sparkles,
+  Search,
   Loader2,
-  Save,
-  RotateCcw,
   Mountain,
   Clock,
   TrendingUp,
   MapPin,
   Download,
+  ArrowLeft,
+  Route,
+  Repeat,
 } from "lucide-react";
 import { API_ROUTES } from "@/lib/api-routes";
 
-interface PlanForm {
+// ── Types ───────────────────────────────────────────────────────────────────
+
+interface Trail {
+  id: number;
+  name: string;
+  ref: string | null;
+  network: string | null;
+  distance: number | null;
+  ascent: number | null;
+  descent: number | null;
+  description: string | null;
+  roundtrip: boolean;
+}
+
+interface TrailDetail {
+  geometry: { type: "LineString"; coordinates: number[][] };
+  distance: number | null;
+  ascent: number | null;
+  descent: number | null;
+  duration: number | null;
+}
+
+interface SearchForm {
   destination: string;
-  date: string;
-  distance: string;
-  elevation: string;
-  difficulty: string;
-  participants: string;
-  fitness: string;
-  equipment: string;
+  distanceMin: string;
+  distanceMax: string;
+  elevationMin: string;
   loop: boolean;
 }
 
-interface Waypoint {
-  name: string;
-  lat: number;
-  lng: number;
-  elevation?: number;
-  description?: string;
-  type?: "start" | "waypoint" | "end";
-}
-
-interface RouteGeometry {
-  type: "LineString";
-  coordinates: [number, number][];
-}
-
-interface PlanResult {
-  plan: string;
-  waypoints: Waypoint[];
-  routeGeometry: RouteGeometry | null;
-  totalDistance: number | null;
-  totalElevation: number | null;
-  estimatedDuration: number | null;
-}
-
-const initialForm: PlanForm = {
-  destination: "",
-  date: "",
-  distance: "",
-  elevation: "",
-  difficulty: "moderate",
-  participants: "1",
-  fitness: "intermediate",
-  equipment: "",
-  loop: false,
-};
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function escapeHtml(str: string): string {
   return str
@@ -69,180 +55,28 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Map component that renders the route with waypoints. */
-function RouteMap({
-  waypoints,
-  routeGeometry,
-}: {
-  waypoints: Waypoint[];
-  routeGeometry: RouteGeometry | null;
-}) {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<import("maplibre-gl").Map | null>(null);
-
-  useEffect(() => {
-    const token = process.env.NEXT_PUBLIC_MAPTILER_KEY;
-    if (!token || waypoints.length === 0) return;
-
-    async function initMap() {
-      const maplibregl = await import("maplibre-gl");
-      await import("maplibre-gl/dist/maplibre-gl.css");
-
-      if (!mapContainer.current) return;
-
-      // Clean up previous map instance.
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-
-      // Center on the midpoint of the route.
-      const midIdx = Math.floor(waypoints.length / 2);
-      const center: [number, number] = [
-        waypoints[midIdx].lng,
-        waypoints[midIdx].lat,
-      ];
-
-      const map = new maplibregl.Map({
-        container: mapContainer.current,
-        style: `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${token}`,
-        center,
-        zoom: 12,
-      });
-      mapRef.current = map;
-
-      map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-      map.on("load", () => {
-        // Use OSRM geometry (follows real paths) or fall back to straight lines.
-        const geometry = routeGeometry ?? {
-          type: "LineString" as const,
-          coordinates: waypoints.map((w) => [w.lng, w.lat]),
-        };
-
-        map.addSource("route", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            properties: {},
-            geometry,
-          },
-        });
-
-        // Route shadow for depth.
-        map.addLayer({
-          id: "route-shadow",
-          type: "line",
-          source: "route",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": "#000",
-            "line-width": 7,
-            "line-opacity": 0.3,
-          },
-        });
-
-        // Main route line.
-        map.addLayer({
-          id: "route-line",
-          type: "line",
-          source: "route",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": "#d4a04a",
-            "line-width": 4,
-            "line-opacity": 0.9,
-          },
-        });
-
-        // Add markers for each waypoint.
-        waypoints.forEach((wp, i) => {
-          const isStart = wp.type === "start" || i === 0;
-          const isEnd =
-            wp.type === "end" || i === waypoints.length - 1;
-
-          const color = isStart
-            ? "#22c55e"
-            : isEnd
-              ? "#ef4444"
-              : "#d4a04a";
-
-          const safeName = escapeHtml(wp.name);
-          const safeDesc = escapeHtml(wp.description ?? "");
-          const elevText = wp.elevation ? `${wp.elevation} m` : "";
-
-          const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
-            `<div style="color:#1a1a18;font-family:sans-serif;max-width:200px">
-              <strong>${safeName}</strong>
-              ${elevText ? `<br/><span style="font-size:11px;color:#666">${elevText}</span>` : ""}
-              ${safeDesc ? `<br/><span style="font-size:12px">${safeDesc}</span>` : ""}
-            </div>`,
-          );
-
-          new maplibregl.Marker({ color })
-            .setLngLat([wp.lng, wp.lat])
-            .setPopup(popup)
-            .addTo(map);
-        });
-
-        // Fit map to route bounds.
-        const bounds = new maplibregl.LngLatBounds();
-        waypoints.forEach((wp) => bounds.extend([wp.lng, wp.lat]));
-        map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
-      });
-    }
-
-    initMap();
-
-    return () => {
-      mapRef.current?.remove();
-      mapRef.current = null;
-    };
-  }, [waypoints, routeGeometry]);
-
-  return <div ref={mapContainer} className="h-full w-full rounded-xl" />;
+function networkLabel(n: string | null): string {
+  if (n === "lwn") return "Local";
+  if (n === "rwn") return "Régional";
+  if (n === "nwn") return "National";
+  if (n === "iwn") return "International";
+  return "";
 }
 
-/** Renders the plan text as safe paragraphs. */
-function PlanText({ text }: { text: string }) {
-  return (
-    <div className="space-y-2 text-sm leading-relaxed text-peak-text">
-      {text.split("\n").map((line, i) => (
-        <p key={i}>{line}</p>
-      ))}
-    </div>
-  );
-}
-
-/** Generate a GPX file from waypoints and route geometry for AllTrails import. */
-function exportGpx(
-  waypoints: Waypoint[],
-  routeGeometry: RouteGeometry | null,
-  name: string,
-) {
-  const timestamp = new Date().toISOString();
-  const wptEntries = waypoints
+function exportGpx(geometry: TrailDetail["geometry"], name: string) {
+  const trkpts = geometry.coordinates
     .map(
-      (wp) =>
-        `  <wpt lat="${wp.lat}" lon="${wp.lng}">${wp.elevation ? `\n    <ele>${wp.elevation}</ele>` : ""}\n    <name>${escapeHtml(wp.name)}</name>${wp.description ? `\n    <desc>${escapeHtml(wp.description)}</desc>` : ""}\n  </wpt>`,
+      (c) =>
+        `      <trkpt lat="${c[1]}" lon="${c[0]}">${c.length > 2 ? `<ele>${c[2]}</ele>` : ""}</trkpt>`,
     )
-    .join("\n");
-
-  const coords = routeGeometry
-    ? routeGeometry.coordinates
-    : waypoints.map((w) => [w.lng, w.lat] as [number, number]);
-
-  const trkpts = coords
-    .map((c) => `      <trkpt lat="${c[1]}" lon="${c[0]}"></trkpt>`)
     .join("\n");
 
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="PeakLog" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
     <name>${escapeHtml(name)}</name>
-    <time>${timestamp}</time>
+    <time>${new Date().toISOString()}</time>
   </metadata>
-${wptEntries}
   <trk>
     <name>${escapeHtml(name)}</name>
     <trkseg>
@@ -260,79 +94,264 @@ ${trkpts}
   URL.revokeObjectURL(url);
 }
 
+// ── Map component ───────────────────────────────────────────────────────────
+
+function TrailMap({
+  geometry,
+}: {
+  geometry: TrailDetail["geometry"];
+}) {
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<import("maplibre-gl").Map | null>(null);
+
+  useEffect(() => {
+    const token = process.env.NEXT_PUBLIC_MAPTILER_KEY;
+    if (!token || geometry.coordinates.length === 0) return;
+
+    async function initMap() {
+      const maplibregl = await import("maplibre-gl");
+      await import("maplibre-gl/dist/maplibre-gl.css");
+      if (!mapContainer.current) return;
+
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+
+      // Fetch style and strip projection to avoid MapLibre errors.
+      const styleUrl = `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${token}`;
+      let style: maplibregl.StyleSpecification | string = styleUrl;
+      try {
+        const styleRes = await fetch(styleUrl);
+        if (styleRes.ok) {
+          const json = await styleRes.json();
+          delete json.projection;
+          style = json as maplibregl.StyleSpecification;
+        }
+      } catch {
+        // Fallback to URL.
+      }
+
+      const coords = geometry.coordinates;
+      const mid = coords[Math.floor(coords.length / 2)];
+
+      const map = new maplibregl.Map({
+        container: mapContainer.current,
+        style,
+        center: [mid[0], mid[1]],
+        zoom: 12,
+      });
+      mapRef.current = map;
+
+      map.addControl(new maplibregl.NavigationControl(), "top-right");
+      map.on("styleimagemissing", () => {});
+
+      map.on("load", () => {
+        map.addSource("trail", {
+          type: "geojson",
+          data: { type: "Feature", properties: {}, geometry },
+        });
+
+        map.addLayer({
+          id: "trail-shadow",
+          type: "line",
+          source: "trail",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-color": "#000", "line-width": 7, "line-opacity": 0.3 },
+        });
+
+        map.addLayer({
+          id: "trail-line",
+          type: "line",
+          source: "trail",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-color": "#d4a04a", "line-width": 4, "line-opacity": 0.9 },
+        });
+
+        // Start marker (green).
+        const start = coords[0];
+        new maplibregl.Marker({ color: "#22c55e" })
+          .setLngLat([start[0], start[1]])
+          .setPopup(new maplibregl.Popup().setHTML("<strong>Départ</strong>"))
+          .addTo(map);
+
+        // End marker (red).
+        const end = coords[coords.length - 1];
+        new maplibregl.Marker({ color: "#ef4444" })
+          .setLngLat([end[0], end[1]])
+          .setPopup(new maplibregl.Popup().setHTML("<strong>Arrivée</strong>"))
+          .addTo(map);
+
+        // Fit bounds.
+        const bounds = new maplibregl.LngLatBounds();
+        coords.forEach((c) => bounds.extend([c[0], c[1]]));
+        map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
+      });
+    }
+
+    initMap();
+    return () => {
+      mapRef.current?.remove();
+      mapRef.current = null;
+    };
+  }, [geometry]);
+
+  return <div ref={mapContainer} className="h-full w-full rounded-xl" />;
+}
+
+// ── Trail card ──────────────────────────────────────────────────────────────
+
+function TrailCard({
+  trail,
+  onSelect,
+}: {
+  trail: Trail;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className="flex w-full items-start gap-4 rounded-xl border border-peak-border bg-peak-surface p-4 text-left transition-colors hover:border-amber-500/50 hover:bg-peak-surface-light"
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-forest-900 text-amber-400">
+        <Route className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate font-medium text-peak-text">{trail.name}</p>
+          {trail.ref && (
+            <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-400">
+              {trail.ref}
+            </span>
+          )}
+          {trail.roundtrip && (
+            <Repeat className="h-3.5 w-3.5 shrink-0 text-forest-500" aria-label="Boucle" />
+          )}
+        </div>
+        {trail.description && (
+          <p className="mt-0.5 line-clamp-1 text-sm text-peak-text-muted">
+            {trail.description}
+          </p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-peak-text-muted">
+          {trail.distance && (
+            <span className="flex items-center gap-1">
+              <Mountain className="h-3 w-3" /> {trail.distance} km
+            </span>
+          )}
+          {trail.ascent && (
+            <span className="flex items-center gap-1">
+              <TrendingUp className="h-3 w-3" /> {trail.ascent} m D+
+            </span>
+          )}
+          {trail.network && (
+            <span className="rounded bg-peak-bg px-1.5 py-0.5">
+              {networkLabel(trail.network)}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── Main page ───────────────────────────────────────────────────────────────
+
+const initialForm: SearchForm = {
+  destination: "",
+  distanceMin: "",
+  distanceMax: "",
+  elevationMin: "",
+  loop: false,
+};
+
 export default function PlanPage() {
-  const [form, setForm] = useState<PlanForm>(initialForm);
-  const [result, setResult] = useState<PlanResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState<SearchForm>(initialForm);
+  const [trails, setTrails] = useState<Trail[]>([]);
+  const [selectedTrail, setSelectedTrail] = useState<Trail | null>(null);
+  const [trailDetail, setTrailDetail] = useState<TrailDetail | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [loadingTrail, setLoadingTrail] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function update(field: keyof PlanForm, value: string) {
+  function update(field: keyof SearchForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
-  function updateParticipants(raw: string) {
-    const n = parseInt(raw, 10);
-    if (!isNaN(n) && n >= 1) {
-      update("participants", String(Math.min(n, 100)));
-    }
-  }
+  // Filter trails based on form criteria.
+  const filteredTrails = trails.filter((t) => {
+    const minDist = form.distanceMin ? parseFloat(form.distanceMin) : 0;
+    const maxDist = form.distanceMax ? parseFloat(form.distanceMax) : Infinity;
+    const minElev = form.elevationMin ? parseFloat(form.elevationMin) : 0;
 
-  async function generate() {
+    if (t.distance && (t.distance < minDist || t.distance > maxDist)) return false;
+    if (t.ascent && t.ascent < minElev) return false;
+    if (form.loop && !t.roundtrip) return false;
+    return true;
+  });
+
+  async function search() {
     if (!form.destination.trim()) {
       setError("Entrez une destination.");
       return;
     }
-    setLoading(true);
+    setSearching(true);
     setError(null);
-    setResult(null);
+    setTrails([]);
+    setSelectedTrail(null);
+    setTrailDetail(null);
 
     try {
-      const res = await fetch(API_ROUTES.PLAN, {
+      const res = await fetch(API_ROUTES.TRAILS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ action: "search", destination: form.destination }),
       });
-
-      let data: Record<string, unknown>;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error("Réponse invalide du serveur.");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Erreur de recherche.");
+      if (Array.isArray(data.trails)) {
+        setTrails(data.trails as Trail[]);
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setSearching(false);
+    }
+  }
 
-      if (!res.ok) {
-        throw new Error(
-          (data.error as string) ?? "Erreur lors de la génération.",
-        );
-      }
+  async function selectTrail(trail: Trail) {
+    setSelectedTrail(trail);
+    setLoadingTrail(true);
+    setTrailDetail(null);
+    setError(null);
 
-      setResult({
-        plan: typeof data.plan === "string" ? data.plan : "",
-        waypoints: Array.isArray(data.waypoints)
-          ? (data.waypoints as Waypoint[])
-          : [],
-        routeGeometry:
-          data.routeGeometry &&
-          typeof data.routeGeometry === "object" &&
-          "coordinates" in (data.routeGeometry as Record<string, unknown>)
-            ? (data.routeGeometry as RouteGeometry)
-            : null,
-        totalDistance:
-          typeof data.totalDistance === "number" ? data.totalDistance : null,
-        totalElevation:
-          typeof data.totalElevation === "number" ? data.totalElevation : null,
-        estimatedDuration:
-          typeof data.estimatedDuration === "number"
-            ? data.estimatedDuration
-            : null,
+    try {
+      const res = await fetch(API_ROUTES.TRAILS, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "geometry", id: trail.id }),
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Erreur de chargement.");
+
+      setTrailDetail({
+        geometry: data.geometry as TrailDetail["geometry"],
+        distance: typeof data.distance === "number" ? data.distance : trail.distance,
+        ascent: typeof data.ascent === "number" ? data.ascent : trail.ascent,
+        descent: typeof data.descent === "number" ? data.descent : trail.descent,
+        duration: typeof data.duration === "number" ? data.duration : null,
       });
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Une erreur est survenue.",
-      );
+      setError(err instanceof Error ? err.message : "Erreur.");
+      setSelectedTrail(null);
     } finally {
-      setLoading(false);
+      setLoadingTrail(false);
     }
+  }
+
+  function goBack() {
+    setSelectedTrail(null);
+    setTrailDetail(null);
   }
 
   const inputClass =
@@ -342,315 +361,248 @@ export default function PlanPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <div className="mb-8">
-        <h1 className="font-display text-3xl font-bold">Planificateur IA</h1>
+        <h1 className="font-display text-3xl font-bold">Trouver une randonnée</h1>
         <p className="mt-2 text-peak-text-muted">
-          Décrivez votre rando, l&apos;IA trace votre itinéraire sur la carte.
+          Recherchez de vraies randonnées balisées près de votre destination.
         </p>
       </div>
 
-      {/* Form — compact row */}
+      {/* Search form */}
       <div className="mb-6 space-y-4 rounded-2xl border border-peak-border bg-peak-surface p-6">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="sm:col-span-2">
             <label className={labelClass}>
               Destination <span aria-hidden="true">*</span>
             </label>
             <input
               type="text"
-              placeholder="Mont Blanc, Tour du Queyras..."
+              placeholder="Chamonix, Queyras, Vercors..."
               value={form.destination}
               onChange={(e) => update("destination", e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && search()}
               maxLength={200}
               className={inputClass}
             />
           </div>
           <div>
-            <label className={labelClass}>Date</label>
+            <label className={labelClass}>Distance min (km)</label>
             <input
-              type="date"
-              value={form.date}
-              onChange={(e) => update("date", e.target.value)}
+              type="number"
+              min="0"
+              placeholder="5"
+              value={form.distanceMin}
+              onChange={(e) => update("distanceMin", e.target.value)}
               className={inputClass}
             />
           </div>
           <div>
-            <label className={labelClass}>Participants</label>
+            <label className={labelClass}>Distance max (km)</label>
             <input
               type="number"
-              min="1"
-              max="100"
-              value={form.participants}
-              onChange={(e) => updateParticipants(e.target.value)}
+              min="0"
+              placeholder="20"
+              value={form.distanceMax}
+              onChange={(e) => update("distanceMax", e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>D+ minimum (m)</label>
+            <input
+              type="number"
+              min="0"
+              placeholder="500"
+              value={form.elevationMin}
+              onChange={(e) => update("elevationMin", e.target.value)}
               className={inputClass}
             />
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div>
-            <label className={labelClass}>Distance (km)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              placeholder="15"
-              value={form.distance}
-              onChange={(e) => update("distance", e.target.value)}
-              className={inputClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Dénivelé (m)</label>
-            <input
-              type="number"
-              min="0"
-              placeholder="800"
-              value={form.elevation}
-              onChange={(e) => update("elevation", e.target.value)}
-              className={inputClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Difficulté</label>
-            <select
-              value={form.difficulty}
-              onChange={(e) => update("difficulty", e.target.value)}
-              className={inputClass}
-            >
-              <option value="easy">Facile</option>
-              <option value="moderate">Modéré</option>
-              <option value="hard">Difficile</option>
-              <option value="expert">Expert</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Niveau</label>
-            <select
-              value={form.fitness}
-              onChange={(e) => update("fitness", e.target.value)}
-              className={inputClass}
-            >
-              <option value="beginner">Débutant</option>
-              <option value="intermediate">Intermédiaire</option>
-              <option value="advanced">Avancé</option>
-              <option value="athlete">Athlète</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Équipement</label>
-            <input
-              type="text"
-              placeholder="Bâtons, crampons..."
-              value={form.equipment}
-              onChange={(e) => update("equipment", e.target.value)}
-              maxLength={500}
-              className={inputClass}
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 pt-1">
+        <div className="flex items-center gap-6 pt-1">
           <label className="flex cursor-pointer items-center gap-2 text-sm text-peak-text">
             <input
               type="checkbox"
               checked={form.loop}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, loop: e.target.checked }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, loop: e.target.checked }))}
               className="h-4 w-4 rounded border-peak-border accent-amber-500"
             />
-            Boucle (retour au départ)
+            Boucle uniquement
           </label>
-        </div>
 
-        <div className="flex gap-3 pt-1">
           <button
-            onClick={generate}
-            disabled={loading}
+            onClick={search}
+            disabled={searching}
             className="flex items-center gap-2 rounded-xl bg-amber-500 px-6 py-3 font-medium text-peak-bg transition-colors hover:bg-amber-400 disabled:opacity-50"
           >
-            {loading ? (
+            {searching ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <Sparkles className="h-5 w-5" />
+              <Search className="h-5 w-5" />
             )}
-            {loading ? "Génération de l'itinéraire..." : "Tracer l'itinéraire"}
-          </button>
-          <button
-            onClick={() => {
-              setForm(initialForm);
-              setResult(null);
-              setError(null);
-            }}
-            className="rounded-xl border border-peak-border px-4 py-3 text-peak-text-muted transition-colors hover:bg-peak-surface-light"
-            aria-label="Réinitialiser le formulaire"
-          >
-            <RotateCcw className="h-5 w-5" />
+            {searching ? "Recherche..." : "Rechercher"}
           </button>
         </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-lg bg-rust-500/10 p-4 text-sm text-rust-400"
-        >
+        <div role="alert" className="mb-6 rounded-lg bg-rust-500/10 p-4 text-sm text-rust-400">
           {error}
         </div>
       )}
 
-      {/* Loading state */}
-      {loading && (
-        <div className="flex h-96 items-center justify-center rounded-2xl border border-peak-border bg-peak-surface">
+      {/* Loading search */}
+      {searching && (
+        <div className="flex h-64 items-center justify-center rounded-2xl border border-peak-border bg-peak-surface">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-10 w-10 animate-spin text-amber-400" />
             <p className="text-sm text-peak-text-muted">
-              Recherche des sentiers et points de passage...
+              Recherche de randonnées près de {form.destination}...
             </p>
           </div>
         </div>
       )}
 
-      {/* Result */}
-      {result && (
+      {/* Trail detail view */}
+      {selectedTrail && (
         <div className="space-y-6">
-          {/* Stats bar */}
-          {(result.totalDistance ||
-            result.totalElevation ||
-            result.estimatedDuration) && (
-            <div className="flex flex-wrap gap-4">
-              {result.totalDistance && (
-                <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-surface px-4 py-2.5">
-                  <Mountain className="h-4 w-4 text-forest-500" />
-                  <span className="text-sm font-medium">
-                    {result.totalDistance} km
-                  </span>
-                </div>
-              )}
-              {result.totalElevation && (
-                <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-surface px-4 py-2.5">
-                  <TrendingUp className="h-4 w-4 text-forest-500" />
-                  <span className="text-sm font-medium">
-                    {result.totalElevation} m D+
-                  </span>
-                </div>
-              )}
-              {result.estimatedDuration && (
-                <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-surface px-4 py-2.5">
-                  <Clock className="h-4 w-4 text-forest-500" />
-                  <span className="text-sm font-medium">
-                    {Math.floor(result.estimatedDuration / 60)}h
-                    {result.estimatedDuration % 60 > 0
-                      ? `${(result.estimatedDuration % 60).toString().padStart(2, "0")}`
-                      : ""}
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-surface px-4 py-2.5">
-                <MapPin className="h-4 w-4 text-forest-500" />
-                <span className="text-sm font-medium">
-                  {result.waypoints.length} étapes
-                </span>
-              </div>
-            </div>
-          )}
+          <button
+            onClick={goBack}
+            className="flex items-center gap-2 text-sm text-peak-text-muted transition-colors hover:text-peak-text"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Retour aux résultats
+          </button>
 
-          {/* Map + plan side by side */}
-          <div className="grid gap-6 lg:grid-cols-5">
-            {/* Map — takes 3/5 of the width */}
-            {result.waypoints.length > 0 && (
-              <div className="lg:col-span-3">
-                <div className="h-[500px] overflow-hidden rounded-2xl border border-peak-border">
-                  <RouteMap waypoints={result.waypoints} routeGeometry={result.routeGeometry} />
-                </div>
-
-                {/* Waypoints list */}
-                <div className="mt-4 space-y-2">
-                  {result.waypoints.map((wp, i) => (
-                    <div
-                      key={i}
-                      className="flex items-start gap-3 rounded-lg bg-peak-surface p-3 text-sm"
-                    >
-                      <div
-                        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                          wp.type === "start"
-                            ? "bg-green-500/20 text-green-400"
-                            : wp.type === "end"
-                              ? "bg-red-500/20 text-red-400"
-                              : "bg-amber-500/20 text-amber-400"
-                        }`}
-                      >
-                        {i + 1}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">{wp.name}</p>
-                        {wp.description && (
-                          <p className="text-peak-text-muted">
-                            {wp.description}
-                          </p>
-                        )}
-                      </div>
-                      {wp.elevation && (
-                        <span className="shrink-0 text-xs text-peak-text-muted">
-                          {wp.elevation} m
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+          {/* Trail header + stats */}
+          <div className="rounded-2xl border border-peak-border bg-peak-surface p-6">
+            <h2 className="font-display text-xl font-bold">
+              {selectedTrail.name}
+              {selectedTrail.ref && (
+                <span className="ml-2 text-base text-amber-400">{selectedTrail.ref}</span>
+              )}
+            </h2>
+            {selectedTrail.description && (
+              <p className="mt-1 text-sm text-peak-text-muted">{selectedTrail.description}</p>
             )}
 
-            {/* Plan text — takes 2/5 */}
-            <div
-              className={`rounded-2xl border border-peak-border bg-peak-surface p-6 ${
-                result.waypoints.length > 0 ? "lg:col-span-2" : "lg:col-span-5"
-              }`}
-            >
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-display text-lg font-semibold">
-                  Plan détaillé
-                </h2>
-                <div className="flex gap-2">
-                  <button
-                    className="flex items-center gap-1.5 rounded-lg bg-forest-800 px-3 py-1.5 text-sm text-forest-200 transition-colors hover:bg-forest-700"
-                    onClick={() =>
-                      exportGpx(
-                        result.waypoints,
-                        result.routeGeometry,
-                        form.destination || "randonnee",
-                      )
-                    }
-                  >
-                    <Download className="h-4 w-4" />
-                    Exporter GPX
-                  </button>
-                  <button
-                    className="flex items-center gap-1.5 rounded-lg bg-forest-800 px-3 py-1.5 text-sm text-forest-200 transition-colors hover:bg-forest-700"
-                    onClick={() => {
-                      /* TODO: save plan */
-                    }}
-                  >
-                    <Save className="h-4 w-4" />
-                    Sauvegarder
-                  </button>
-                </div>
+            {trailDetail && (
+              <div className="mt-4 flex flex-wrap gap-4">
+                {trailDetail.distance && (
+                  <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-bg px-4 py-2.5">
+                    <Mountain className="h-4 w-4 text-forest-500" />
+                    <span className="text-sm font-medium">{trailDetail.distance} km</span>
+                  </div>
+                )}
+                {trailDetail.ascent && (
+                  <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-bg px-4 py-2.5">
+                    <TrendingUp className="h-4 w-4 text-forest-500" />
+                    <span className="text-sm font-medium">{trailDetail.ascent} m D+</span>
+                  </div>
+                )}
+                {trailDetail.descent && (
+                  <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-bg px-4 py-2.5">
+                    <TrendingUp className="h-4 w-4 rotate-180 text-forest-500" />
+                    <span className="text-sm font-medium">{trailDetail.descent} m D-</span>
+                  </div>
+                )}
+                {trailDetail.duration && (
+                  <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-bg px-4 py-2.5">
+                    <Clock className="h-4 w-4 text-forest-500" />
+                    <span className="text-sm font-medium">
+                      {Math.floor(trailDetail.duration / 60)}h
+                      {trailDetail.duration % 60 > 0
+                        ? `${(trailDetail.duration % 60).toString().padStart(2, "0")}`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+                {selectedTrail.roundtrip && (
+                  <div className="flex items-center gap-2 rounded-xl border border-peak-border bg-peak-bg px-4 py-2.5">
+                    <Repeat className="h-4 w-4 text-forest-500" />
+                    <span className="text-sm font-medium">Boucle</span>
+                  </div>
+                )}
               </div>
-              <PlanText text={result.plan} />
-            </div>
+            )}
           </div>
+
+          {/* Map */}
+          {loadingTrail && (
+            <div className="flex h-96 items-center justify-center rounded-2xl border border-peak-border bg-peak-surface">
+              <Loader2 className="h-10 w-10 animate-spin text-amber-400" />
+            </div>
+          )}
+          {trailDetail && (
+            <>
+              <div className="h-[500px] overflow-hidden rounded-2xl border border-peak-border">
+                <TrailMap geometry={trailDetail.geometry} />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => exportGpx(trailDetail.geometry, selectedTrail.name)}
+                  className="flex items-center gap-2 rounded-xl bg-forest-800 px-4 py-2.5 text-sm font-medium text-forest-200 transition-colors hover:bg-forest-700"
+                >
+                  <Download className="h-4 w-4" />
+                  Exporter GPX
+                </button>
+                <a
+                  href={`https://www.openstreetmap.org/relation/${selectedTrail.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-xl border border-peak-border px-4 py-2.5 text-sm text-peak-text-muted transition-colors hover:bg-peak-surface-light"
+                >
+                  <MapPin className="h-4 w-4" />
+                  Voir sur OpenStreetMap
+                </a>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Search results list */}
+      {!selectedTrail && !searching && trails.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-peak-text-muted">
+              {filteredTrails.length} randonnée{filteredTrails.length > 1 ? "s" : ""} trouvée{filteredTrails.length > 1 ? "s" : ""}
+              {filteredTrails.length !== trails.length && ` (sur ${trails.length} au total)`}
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredTrails.map((trail) => (
+              <TrailCard
+                key={trail.id}
+                trail={trail}
+                onSelect={() => selectTrail(trail)}
+              />
+            ))}
+          </div>
+          {filteredTrails.length === 0 && trails.length > 0 && (
+            <div className="rounded-xl border border-peak-border bg-peak-surface p-6 text-center text-sm text-peak-text-muted">
+              Aucune randonnée ne correspond aux filtres. Essayez d&apos;élargir vos critères.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* No results */}
+      {!selectedTrail && !searching && trails.length === 0 && !error && form.destination && (
+        <div className="rounded-xl border border-peak-border bg-peak-surface p-6 text-center text-sm text-peak-text-muted">
+          Aucune randonnée trouvée. Essayez une autre destination ou un rayon plus large.
         </div>
       )}
 
       {/* Empty state */}
-      {!result && !error && !loading && (
+      {!selectedTrail && !searching && trails.length === 0 && !error && !form.destination && (
         <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-peak-border bg-peak-surface text-peak-text-muted">
-          <MapPin className="mb-3 h-10 w-10" />
+          <Search className="mb-3 h-10 w-10" />
           <p className="text-center text-sm">
-            Remplissez le formulaire et l&apos;IA tracera
+            Entrez une destination pour trouver
             <br />
-            votre itinéraire sur la carte.
+            des randonnées balisées à proximité.
           </p>
         </div>
       )}

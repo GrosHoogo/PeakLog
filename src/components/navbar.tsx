@@ -8,6 +8,7 @@ import {
   BookOpen,
   BarChart3,
   Sparkles,
+  Backpack,
   Settings,
   Menu,
   X,
@@ -16,6 +17,7 @@ import { useState } from "react";
 
 const links = [
   { href: "/plan", label: "Planifier", icon: Sparkles },
+  { href: "/gear", label: "Mon sac", icon: Backpack },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/map", label: "Carte", icon: Map },
   { href: "/stats", label: "Stats", icon: BarChart3 },

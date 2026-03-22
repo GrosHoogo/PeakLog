@@ -11,7 +11,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data: https://fonts.gstatic.com",
-  "connect-src 'self' https://generativelanguage.googleapis.com https://www.strava.com https://api.maptiler.com https://api.openrouteservice.org https://*.supabase.co wss://*.supabase.co",
+  "connect-src 'self' https://generativelanguage.googleapis.com https://www.strava.com https://api.maptiler.com https://*.maptiler.com https://api.openrouteservice.org https://router.project-osrm.org https://overpass-api.de https://*.supabase.co wss://*.supabase.co",
   "worker-src blob:",
   "frame-src 'none'",
   "object-src 'none'",
