@@ -1,65 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import Groq from "groq-sdk";
 import { PlanFormSchema } from "@/lib/validation";
 import { checkRateLimit, getClientKey } from "@/lib/rate-limit";
 
-// 10 plan generations per hour per client.
+// 10 plan searches per hour per client.
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-// ── ORS types ───────────────────────────────────────────────────────────────
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 
-interface OrsFeature {
-  type: "Feature";
-  geometry: { type: "LineString"; coordinates: [number, number, number][] };
-  properties: {
-    summary: { distance: number; duration: number; ascent: number; descent: number };
-    segments: { distance: number; duration: number; ascent: number; descent: number }[];
-  };
+// ── OpenRouter types ────────────────────────────────────────────────────────
+
+interface OpenRouterChoice {
+  message: { role: string; content: string };
 }
 
-interface OrsResponse {
-  type: "FeatureCollection";
-  features: OrsFeature[];
-}
-
-// ── ORS helpers ─────────────────────────────────────────────────────────────
-
-async function orsDirections(
-  coords: [number, number][],
-  orsKey: string,
-): Promise<OrsFeature | null> {
-  try {
-    const res = await fetch(
-      "https://api.openrouteservice.org/v2/directions/foot-hiking/geojson",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: orsKey },
-        body: JSON.stringify({
-          coordinates: coords,
-          elevation: true,
-        }),
-      },
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as OrsResponse;
-    return data.features?.[0] ?? null;
-  } catch {
-    return null;
-  }
+interface OpenRouterResponse {
+  choices?: OpenRouterChoice[];
+  error?: { message: string };
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const groqKey = process.env.GROQ_API_KEY;
-  const orsKey = process.env.ORS_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
 
-  if (!groqKey) {
-    return NextResponse.json({ error: "GROQ_API_KEY non configurée." }, { status: 500 });
-  }
-  if (!orsKey) {
-    return NextResponse.json({ error: "ORS_API_KEY non configurée." }, { status: 500 });
+  if (!apiKey) {
+    return NextResponse.json({ error: "OPENROUTER_API_KEY non configurée." }, { status: 500 });
   }
 
   // Rate limit.
@@ -85,158 +52,141 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { destination, date, distance, elevation, difficulty, participants, fitness, equipment, loop } =
-    parsed.data;
+  const { destination, distance, region, elevation, difficulty, type } = parsed.data;
 
-  // ── Step 1: Ask Groq for waypoints ──────────────────────────────────────
+  const distKm = distance ? parseFloat(distance) : null;
+  const elevM = elevation ? parseFloat(elevation) : null;
 
-  const prompt = `Tu es un guide de montagne expert en sentiers de randonnée.
+  const difficultyLabel: Record<string, string> = {
+    any: "peu importe",
+    easy: "facile",
+    moderate: "modéré",
+    hard: "difficile",
+    expert: "expert / alpinisme",
+  };
 
-Génère un plan de randonnée pour la zone de ${destination}.
+  const typeLabel: Record<string, string> = {
+    any: "peu importe",
+    loop: "boucle",
+    "out-and-back": "aller-retour",
+    "point-to-point": "point à point / traversée",
+  };
 
-PARAMÈTRES :
-- Date : ${date || "non précisée"}
-${distance ? `- Distance souhaitée : ${distance} km` : "- Distance : libre"}
-${elevation ? `- Dénivelé positif souhaité : ${elevation} m D+` : "- Dénivelé : libre"}
-- Type : ${loop ? "BOUCLE (circuit fermé, retour au point de départ)" : "ALLER SIMPLE"}
-- Difficulté : ${difficulty}
-- Participants : ${participants}
-- Niveau : ${fitness}
-- Équipement : ${equipment || "non précisé"}
+  const prompt = `Tu es un expert en randonnée qui connaît parfaitement les sentiers référencés sur AllTrails, Visorando, Komoot, et les topos IGN.
 
-${loop ? `BOUCLE — INSTRUCTIONS CRITIQUES :
-- Les waypoints DOIVENT former un CIRCUIT CIRCULAIRE sur la carte (pas un aller-retour).
-- Monte par un versant, descends par un AUTRE versant. Les waypoints d'aller et de retour sont dans des directions OPPOSÉES.
-- Le DERNIER waypoint a les MÊMES coordonnées lat/lng que le PREMIER.
-- Dispose les waypoints en cercle/ovale autour d'un point central (sommet, lac, col).
-${distance ? `- Pour une boucle de ${distance} km, reste dans un rayon de ~${(parseFloat(distance) / 5).toFixed(1)} km autour du départ.` : ""}` : ""}
+MISSION : Suggère 5 à 8 randonnées RÉELLES et EXISTANTES correspondant aux critères ci-dessous. Ces randonnées doivent être trouvables sur AllTrails, Visorando, ou Komoot.
 
-${distance ? `DISTANCE — Place les waypoints pour que le parcours sur sentier fasse environ ${distance} km au total. Pour ça, les waypoints doivent être PROCHES les uns des autres (segments de ~${(parseFloat(distance) / 7).toFixed(1)} km en ligne droite).` : ""}
+CRITÈRES :
+- Lieu de référence : ${destination}
+${region ? `- Région : ${region}` : ""}
+${distKm ? `- Distance souhaitée : environ ${distKm} km (tolérance ±30%)` : "- Distance : peu importe"}
+${elevM ? `- Dénivelé positif souhaité : environ ${elevM} m (tolérance ±30%)` : "- Dénivelé : peu importe"}
+- Difficulté : ${difficultyLabel[difficulty] ?? "peu importe"}
+- Type de parcours : ${typeLabel[type] ?? "peu importe"}
 
-${elevation ? `DÉNIVELÉ — Le départ est en fond de vallée/parking. Les waypoints montent progressivement jusqu'à un point culminant situé ~${elevation}m plus haut, puis redescendent. Les altitudes de chaque waypoint doivent refléter cette progression.` : ""}
+RÈGLES STRICTES :
+- Ne suggère QUE des randonnées qui EXISTENT RÉELLEMENT et sont référencées sur au moins une plateforme (AllTrails, Visorando, Komoot)
+- Les distances et dénivelés doivent correspondre aux données RÉELLES de la randonnée, pas à des estimations
+- Donne le NOM EXACT tel qu'il apparaît sur la plateforme source
+- Si tu n'es pas sûr qu'une randonnée existe, ne l'inclus pas
 
-Réponds UNIQUEMENT en JSON valide :
-{
-  "plan": "Plan en français : 1. Itinéraire détaillé étape par étape, 2. Horaires, 3. Sécurité, 4. Conseil du guide",
-  "waypoints": [
-    {"name": "Nom du lieu", "lat": 45.923, "lng": 6.862, "elevation": 1050, "description": "Description courte", "type": "start"},
-    {"name": "...", "lat": ..., "lng": ..., "elevation": ..., "description": "...", "type": "waypoint"},
-    {"name": "...", "lat": ..., "lng": ..., "elevation": ..., "description": "...", "type": "end"}
-  ]
-}
+Réponds UNIQUEMENT avec un tableau JSON valide (pas de markdown, pas de texte avant/après) :
+[
+  {
+    "name": "Nom exact de la randonnée",
+    "zone": "Commune ou massif, département",
+    "distance": 12.5,
+    "elevation": 650,
+    "difficulty": "modéré",
+    "type": "boucle",
+    "description": "Description courte (2-3 phrases) : itinéraire, points d'intérêt, ambiance.",
+    "source": "AllTrails",
+    "url": "https://www.alltrails.com/trail/..."
+  }
+]
 
-Règles :
-- Coordonnées GPS de VRAIS lieux/sentiers à ${destination}
-- 6 à 10 waypoints
-- type "start" pour le premier, "end" pour le dernier, "waypoint" pour les intermédiaires
-- Altitudes réalistes correspondant au terrain réel
-- Plan texte en français, pratique et motivant`;
+Les champs distance (en km) et elevation (D+ en m) sont des nombres. Le champ url doit être l'URL réelle de la randonnée sur la plateforme source si tu la connais, sinon mets null.`;
 
   try {
-    const groq = new Groq({ apiKey: groqKey });
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
-      temperature: 0.3,
-      response_format: { type: "json_object" },
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 4096,
+      }),
     });
 
-    const raw = completion.choices[0]?.message?.content;
-    if (!raw || raw.trim() === "") {
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("OpenRouter error:", res.status, errBody);
+      return NextResponse.json(
+        { error: process.env.NODE_ENV === "development" ? `OpenRouter ${res.status}: ${errBody}` : "Erreur du service IA." },
+        { status: 502 },
+      );
+    }
+
+    const data = (await res.json()) as OpenRouterResponse;
+
+    if (data.error) {
+      console.error("OpenRouter API error:", data.error.message);
+      return NextResponse.json(
+        { error: process.env.NODE_ENV === "development" ? `OpenRouter: ${data.error.message}` : "Erreur du service IA." },
+        { status: 502 },
+      );
+    }
+
+    const raw = data.choices?.[0]?.message?.content ?? "";
+    if (!raw.trim()) {
       return NextResponse.json({ error: "Réponse IA vide." }, { status: 502 });
     }
 
-    let aiResult: unknown;
+    // Parse JSON — strip markdown fences if present.
+    const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+    let trails: unknown;
     try {
-      aiResult = JSON.parse(raw);
+      trails = JSON.parse(cleaned);
     } catch {
-      return NextResponse.json({ plan: raw, waypoints: [] });
+      return NextResponse.json({ error: "Réponse IA invalide." }, { status: 502 });
     }
 
-    const aiData = aiResult as Record<string, unknown>;
-    const plan = typeof aiData.plan === "string" ? aiData.plan : "Plan non disponible.";
-    const aiWaypoints = Array.isArray(aiData.waypoints) ? aiData.waypoints : [];
-
-    // Extract valid coordinates from AI waypoints.
-    const validWaypoints = aiWaypoints.filter(
-      (wp: Record<string, unknown>) =>
-        typeof wp.lat === "number" &&
-        typeof wp.lng === "number" &&
-        Math.abs(wp.lat as number) <= 90 &&
-        Math.abs(wp.lng as number) <= 180,
-    ) as { name: string; lat: number; lng: number; elevation?: number; description?: string; type?: string }[];
-
-    if (validWaypoints.length < 2) {
-      return NextResponse.json({
-        plan,
-        waypoints: validWaypoints,
-        routeGeometry: null,
-        routeDistanceKm: null,
-        routeElevationUp: null,
-        routeElevationDown: null,
-        totalDistance: null,
-        totalElevation: null,
-        estimatedDuration: null,
-      });
+    if (!Array.isArray(trails)) {
+      return NextResponse.json({ error: "Format de réponse inattendu." }, { status: 502 });
     }
 
-    // ── Step 2: Route via ORS foot-hiking ─────────────────────────────────
+    // Validate and sanitize each trail.
+    const validTrails = trails
+      .filter(
+        (t: Record<string, unknown>) =>
+          typeof t.name === "string" && t.name.length > 0,
+      )
+      .map((t: Record<string, unknown>) => ({
+        name: String(t.name),
+        zone: typeof t.zone === "string" ? t.zone : null,
+        distance: typeof t.distance === "number" ? t.distance : null,
+        elevation: typeof t.elevation === "number" ? t.elevation : null,
+        difficulty: typeof t.difficulty === "string" ? t.difficulty : null,
+        type: typeof t.type === "string" ? t.type : null,
+        description: typeof t.description === "string" ? t.description : null,
+        source: typeof t.source === "string" ? t.source : null,
+        url: typeof t.url === "string" && t.url.startsWith("https://") ? t.url : null,
+      }));
 
-    const coords: [number, number][] = validWaypoints.map((wp) => [wp.lng, wp.lat]);
-    const orsFeature = await orsDirections(coords, orsKey);
-
-    let routeGeometry: unknown = null;
-    let routeDistanceKm: number | null = null;
-    let routeElevationUp: number | null = null;
-    let routeElevationDown: number | null = null;
-    let routeDurationMin: number | null = null;
-
-    if (orsFeature) {
-      routeGeometry = orsFeature.geometry;
-      const s = orsFeature.properties.summary;
-      routeDistanceKm = Math.round((s.distance / 1000) * 100) / 100;
-      routeElevationUp = Math.round(s.ascent);
-      routeElevationDown = Math.round(s.descent);
-      routeDurationMin = Math.round(s.duration / 60);
-    }
-
-    // User-requested values for display; ORS values are the real route stats.
-    const distStr = String(distance ?? "");
-    const elevStr = String(elevation ?? "");
-    const userDist = distStr.length > 0 ? parseFloat(distStr) : NaN;
-    const userElev = elevStr.length > 0 ? parseFloat(elevStr) : NaN;
-    const totalDistance = !isNaN(userDist) && userDist > 0 ? userDist : null;
-    const totalElevation = !isNaN(userElev) && userElev > 0 ? userElev : null;
-
-    // Use ORS duration if available, otherwise estimate from user values.
-    let estimatedDuration = routeDurationMin;
-    if (!estimatedDuration && totalDistance && totalDistance > 0) {
-      const walkMin = (totalDistance / 4) * 60;
-      const climbMin = totalElevation ? (totalElevation / 400) * 60 : 0;
-      estimatedDuration = Math.round(Math.max(walkMin, climbMin) + Math.min(walkMin, climbMin) * 0.5);
-    }
-
-    return NextResponse.json({
-      plan,
-      waypoints: validWaypoints,
-      routeGeometry,
-      routeDistanceKm,
-      routeElevationUp,
-      routeElevationDown,
-      totalDistance,
-      totalElevation,
-      estimatedDuration,
-    });
+    return NextResponse.json({ trails: validTrails });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur inconnue.";
-    console.error("Plan generation error:", message);
+    console.error("Plan search error:", message);
     return NextResponse.json(
       {
         error:
           process.env.NODE_ENV === "development"
-            ? `Erreur : ${message}`
-            : "Erreur lors de la génération.",
+            ? `Erreur OpenRouter : ${message}`
+            : "Erreur lors de la recherche.",
       },
       { status: 500 },
     );
